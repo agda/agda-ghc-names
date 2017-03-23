@@ -36,14 +36,16 @@ extract args = case args of
     _ -> printUsage "extract <directory>"
 
 fixprof :: [String] -> IO ()
-fixprof args = case args of
-    "+m" : args' -> fixProf' True args'
-    _ -> fixProf' False args
+fixprof = uncurry fixProf' . getOpts False False
+  where
+    getOpts m s ("+m" : args) = getOpts True s args
+    getOpts m s ("+s" : args) = getOpts m True args
+    getOpts m s args = ((m, s), args)
 
-fixProf' keepMod args = case args of
+fixProf' (keepMod, keepSrc) args = case args of
     [] -> usage
     [_] -> usage
     dir : profs -> do
       resolve <- liftM apply2M $ getResolveHsNamesMap dir
-      mapM_ (updateProfFile usage resolve keepMod) profs
-  where usage = printUsage "fixprof {+m} <dir> <File>.prof"
+      mapM_ (updateProfFile usage resolve keepMod keepSrc) profs
+  where usage = printUsage "fixprof {+m} {+s} <dir> <File>.prof"

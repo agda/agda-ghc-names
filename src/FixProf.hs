@@ -46,17 +46,20 @@ checkPrefix pre s = case stripPrefix pre s of
     (spaces, s'') -> Just (length pre + length spaces, s'')
   _ -> Nothing
 
--- If |checkSepLine s == Just (ccWidth, modWidth)|,
+-- If |checkSepLine s == Just (ccWidth, modWidth, mSrcWidth)|,
 -- then these are the widths of the first two columns
--- (assuming that the "no." is always indented three positions).
-checkSepLine :: String -> Maybe (Int, Int)
+-- (assuming that the "no." is always indented three positions),
+-- respectively three columns with GHC-8, where "no." is not indented anymore.
+checkSepLine :: String -> Maybe (Int, Int, Maybe Int)
 checkSepLine s = case checkPrefix "COST CENTRE" s of
   Just (ccWidth, s') -> case checkPrefix "MODULE" s' of
       Just (modWidth0, s'') -> let
-          modWidth = case stripPrefix "no." s'' of
-            Just _ -> modWidth0 - 3
-            Nothing -> modWidth0
-        in Just (ccWidth, modWidth)
+          (modWidth, mSrcWidth) = case stripPrefix "no." s'' of
+            Just _ -> (modWidth0 - 3, Nothing)
+            Nothing -> case checkPrefix "SRC" s'' of
+              Just (srcWidth, s''') -> (modWidth0, Just srcWidth)
+              Nothing -> (modWidth0, Nothing)
+        in Just (ccWidth, modWidth, mSrcWidth)
       Nothing -> error $ "checkSepLine: unexpected line: " ++ show s
   _ -> Nothing
 
@@ -70,21 +73,28 @@ firstWord s = case span isSpace s of
   (spaces, s') -> (spaces, takeWhile (not . isSpace) s')
 
 -- |splitLine ccWidth modWidth s = ((indent, ccName), modName, rest)|
-splitLine :: Int -> Int -> String -> ((String, String), String, String)
-splitLine ccWidth modWidth s = case splitAt ccWidth s of
+splitLine :: Int -> Int -> Maybe Int -> String -> ((String, String), (String, String), String)
+splitLine ccWidth modWidth mSrcWidth s = case splitAt ccWidth s of
   (cc0, s') -> case splitAt modWidth s' of
-    (mod0, s'') -> (firstWord cc0, head (words mod0), s'')
+    (mod0, s'') ->  let
+        hmod = head (words mod0)
+        (src, s''') = case mSrcWidth of
+          Nothing -> ("", s'')
+          Just srcWidth -> splitAt srcWidth s''
+       in (firstWord cc0, (hmod, src), s''')
 
-updateLine :: (String -> String -> Maybe String) -> Int -> Int -> Bool -> String -> (String, String)
-updateLine resolve ccWidth modWidth keepMod s = case splitLine ccWidth modWidth s of
-  ((indent, cc), hmod, s') -> (,) (indent ++ resolveCC resolve cc hmod)
-     (if keepMod then spaceOut modWidth hmod s' else s')
+updateLine :: (String -> String -> Maybe String) -> Int -> Int -> Bool -> Maybe Int -> Bool -> String -> (String, String)
+updateLine resolve ccWidth modWidth keepMod mSrcWidth keepSrc s
+   = case splitLine ccWidth modWidth mSrcWidth s of
+  ((indent, cc), (hmod, src), s') -> (,) (indent ++ resolveCC resolve cc hmod)
+     (let s'' = if keepMod then spaceOut modWidth hmod s' else s'
+     in if keepSrc then maybe (++) spaceOut mSrcWidth src s'' else s'')
 
 spaceOut :: Int -> String -> String -> String
 spaceOut w s1 s2 = take w (s1 ++ repeat ' ') ++ ' ' : ' ' : s2
 
-updateLines :: (String -> String -> Maybe String) -> Int -> Int -> Bool -> [String] -> ((Int, [String]), [String])
-updateLines resolve ccWidth modWidth keepMod ls = case h id ls of
+updateLines :: (String -> String -> Maybe String) -> Int -> Int -> Bool -> Maybe Int -> Bool -> [String] -> ((Int, [String]), [String])
+updateLines resolve ccWidth modWidth keepMod mSrcWidth keepSrc ls = case h id ls of
     (ps, ls') -> let
         w = maximum (map (length . fst) ps)
         render (cc, rest) = spaceOut w cc rest
@@ -92,27 +102,31 @@ updateLines resolve ccWidth modWidth keepMod ls = case h id ls of
   where
     h acc [] = (acc [],[])
     h acc ([] : ss) = (acc [], ss)
-    h acc (s : ss) = h (acc . (updateLine resolve ccWidth modWidth keepMod s :)) ss
+    h acc (s : ss) = h (acc . (updateLine resolve ccWidth modWidth keepMod mSrcWidth keepSrc s :)) ss
 
-updateProf :: (String -> String -> Maybe String) -> Bool -> [String] -> [String]
-updateProf resolve keepMod [] = []
-updateProf resolve keepMod (s : ss) = case checkSepLine s of
-  Nothing -> s : updateProf resolve keepMod ss
-  Just (ccWidth, modWidth) -> let
-    ((w, new), rest) = updateLines resolve ccWidth modWidth keepMod (drop 1 ss)
+updateProf :: (String -> String -> Maybe String) -> Bool -> Bool -> [String] -> [String]
+updateProf resolve keepMod keepSrc [] = []
+updateProf resolve keepMod keepSrc (s : ss) = case checkSepLine s of
+  Nothing -> s : updateProf resolve keepMod keepSrc ss
+  Just (ccWidth, modWidth, mSrcWidth) -> let
+    ((w, new), rest) = updateLines resolve ccWidth modWidth keepMod mSrcWidth keepSrc (drop 1 ss)
     s' = drop ccWidth s
     s'' = if keepMod then s' else drop modWidth s'
-   in  spaceOut w "COST CENTRE" s''
+    s''' = if keepSrc then s'' else maybe id drop mSrcWidth s''
+   in  spaceOut w "COST CENTRE" s'''
    :   []
    :   new
    ++  []
-   :   updateProf resolve keepMod rest
+   :   updateProf resolve keepMod keepSrc rest
 
-updateProfFile :: IO () -> (String -> String -> Maybe String) -> Bool -> FilePath -> IO ()
-updateProfFile usage resolve keepMod path = case stripPrefix (reverse ".prof") (reverse path) of
+updateProfFile  :: IO ()
+                -> (String -> String -> Maybe String)
+                -> Bool -> Bool -> FilePath -> IO ()
+updateProfFile usage resolve keepMod keepSrc path
+  = case stripPrefix (reverse ".prof") (reverse path) of
   Nothing -> usage
   Just revBasename -> let path' = reverse revBasename ++ ".agdaIdents.prof" in do
     s <- readFile path
     hPutStrLn stderr $ "read " ++ path
-    writeFile path' . unlines . updateProf resolve keepMod $ lines s
+    writeFile path' . unlines . updateProf resolve keepMod keepSrc $ lines s
     hPutStrLn stderr $ "wrote " ++ path'

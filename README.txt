@@ -24,7 +24,7 @@ agda-ghc-names extract <dir>
   (The heavy heap usage is due to the use of haskell-src-exts
     for parsing the MAlonzo-generated Haskell files, which may be quite large.)
 
-agda-ghc-names fixprof {+m} <dir> <progname>.prof
+agda-ghc-names fixprof {+m} [+s] <dir> <progname>.prof
   generates <progname>.agdaIdents.prof by replacing Haskell identifiers
   in <progname>.prof by Agda identifiers, as far as these can be found
   in MAlonzo-compiled *.hs files below <dir>.
@@ -33,6 +33,8 @@ agda-ghc-names fixprof {+m} <dir> <progname>.prof
   ``agda-ghc-names extract <dir>''.
   The option ``+m'' includes also the original Haskell module column
   in the output.
+  The option ``+s'' includes also the original Haskell source location column
+  added in GHC-8 in the output.
 
 agda-ghc-names find <dir> {hsIdents}
   also reads <dir>/MAlonzoHsToAgdaIdentMap.dat if it already exists,

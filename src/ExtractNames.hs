@@ -76,33 +76,44 @@ getNames0 modname = get >>= h
 -- or actually parse Haskell.
 -- I try the latter for now, hoping that this is not too brittle.
 
-moduleName :: Hs.Module -> String
-moduleName (Hs.Module _ (Hs.ModuleName modname) _ _ _ _ _) = modname
+unModuleName :: Hs.ModuleName l -> String
+unModuleName (Hs.ModuleName _ modname) = modname
 
-moduleDecls :: Hs.Module -> [Hs.Decl]
-moduleDecls (Hs.Module _ _ _ _ _ _ decls) = decls
+moduleHeadName :: Hs.ModuleHead l -> String
+moduleHeadName (Hs.ModuleHead _ mName _ _) = unModuleName mName
+
+mModuleHeadName :: Maybe (Hs.ModuleHead l) -> String
+mModuleHeadName = maybe "Main" moduleHeadName
+
+moduleName :: Hs.Module l -> String
+moduleName (Hs.Module _ mHead _ _ _) = mModuleHeadName mHead
+moduleName (Hs.XmlPage _ mName _ _ _ _ _) = unModuleName mName
+moduleName (Hs.XmlHybrid _ mHead _ _ _ _ _ _ _) = mModuleHeadName mHead
+
+moduleDecls :: Hs.Module l -> [Hs.Decl l]
+moduleDecls (Hs.Module _ _ _ _ decls) = decls
 
 -- We assume that all ``nameXYZ'' definitions are pattern bindings.
 -- Only for these we really need the RHS.
 -- Not all ``dXYZ'' definitions are pattern bindings ---
 -- for those that are not, we currently just return the first RHS,
 -- and will not look at it.
-filterDecls :: [Hs.Decl] -> [(String, Hs.Rhs)]
+filterDecls :: [Hs.Decl l] -> [(String, Hs.Rhs l)]
 filterDecls = foldr f []
  where
-   f (Hs.PatBind _loc (Hs.PVar (Hs.Ident varname)) rhs _binds) r = (varname, rhs) : r
-   f (Hs.FunBind ((Hs.Match _loc (Hs.Ident fName) _pats _mtype rhs _binds) : _)) r = (fName, rhs) : r
+   f (Hs.PatBind _loc (Hs.PVar _ (Hs.Ident _ varname)) rhs _binds) r = (varname, rhs) : r
+   f (Hs.FunBind _ ((Hs.Match _loc (Hs.Ident _ fName) _pats rhs _binds) : _)) r = (fName, rhs) : r
    f _ r = r
 
-getNames :: String -> [(String, Hs.Rhs)] -> [(String, String)]
+getNames :: forall l . Show l => String -> [(String, Hs.Rhs l)] -> [(String, String)]
 getNames modul = h
   where
-    h :: [(String, Hs.Rhs)] -> [(String, String)]
+    h :: [(String, Hs.Rhs l)] -> [(String, String)]
     h [] = []
-    h ((name1, Hs.UnGuardedRhs rhs) : ds) = case stripPrefix infoDeclNamePrefix name1 of
+    h ((name1, Hs.UnGuardedRhs _ rhs) : ds) = case stripPrefix infoDeclNamePrefix name1 of
       Nothing -> h ds
       Just unique -> case rhs of
-        Hs.Lit (Hs.String agdaName) -> expectDef hsIdentPrefix (expectDef hsSubIdentPrefix h) ds
+        Hs.Lit _ (Hs.String _ agdaName _srcRepr) -> expectDef hsIdentPrefix (expectDef hsSubIdentPrefix h) ds
           where
             hsName = hsIdentPrefix ++ unique
             hsName2 = hsSubIdentPrefix ++ unique
@@ -111,7 +122,7 @@ getNames modul = h
             -- and only on the next line.
             -- Names without definition still can be referenced in .prof files.
             -- TODO: Should we flag these in some way?
-            expectDef :: String -> ([(String, Hs.Rhs)] -> [(String, String)]) -> [(String, Hs.Rhs)] -> [(String, String)]
+            expectDef :: String -> ([(String, Hs.Rhs l)] -> [(String, String)]) -> [(String, Hs.Rhs l)] -> [(String, String)]
             expectDef _ _ [] = [(hsName, agdaName)]
             expectDef prefix cont ((name2, _) : ds') = case stripPrefix prefix name2 of
               Nothing -> (hsName, agdaName) : h ds
