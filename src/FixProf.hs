@@ -125,7 +125,13 @@ updateProfFile  :: IO ()
 updateProfFile usage resolve keepMod keepSrc path
   = case stripPrefix (reverse ".prof") (reverse path) of
   Nothing -> usage
-  Just revBasename -> let path' = reverse revBasename ++ ".agdaIdents.prof" in do
+  Just revBasename -> let
+      path' = reverse revBasename ++ ".agdaIdents"
+            ++  ( (if keepMod then ("_MOD" ++) else id)
+                $ (if keepSrc then ("_SRC" ++) else id)
+                $ ".prof"
+                )
+    in do
     s <- readFile path
     hPutStrLn stderr $ "read " ++ path
     writeFile path' . unlines . updateProf resolve keepMod keepSrc $ lines s
